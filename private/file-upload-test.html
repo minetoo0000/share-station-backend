@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="kr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  <input id="uploads" type="file" formenctype="multipart/form-data">
+  <button id="btn">전달</button>
+  <div id="TTest"></div>
+</body>
+<script>
+  const uploads = document.querySelector("#uploads");
+  const btn = document.querySelector("#btn");
+  console.log(uploads);
+  console.log(btn);
+
+  function _base64ToBytes(base64) {
+    var result = new Uint8Array();
+    var decoded = "";
+    if (base64.length == 0)
+        return (result);
+    decoded = atob(base64);
+    result = Uint8Array.from(decoded, function (m) { return m.codePointAt(0); });
+    return (result);
+  }
+  function _bytesToBase64(bytes) {
+      var binString = Array.from(bytes, function (x) { return String.fromCodePoint(x); }).join("");
+      return btoa(binString);
+  }
+  function base64Encode(str) {
+      return (_bytesToBase64(new TextEncoder().encode(str)));
+  }
+  function base64Decode(base64) {
+      var result = "";
+      var byte = _base64ToBytes(base64);
+      result = new TextDecoder().decode(byte);
+      return (result);
+  }
+  
+  btn.addEventListener('click', async( e )=>{
+    await send();
+  });
+  async function send()
+  {
+    console.log(uploads);
+    if ( uploads.files[0] == undefined ) return;
+    console.log(`send...`);
+    console.log(`file name : ${uploads.files[0].name}`);
+    const encode_name = base64Encode(uploads.files[0].name);
+    console.log(`encoded name : ${encode_name}`);
+    const conv_file = new File([uploads.files[0]], encode_name, { type:uploads.files[0].type });
+    let form = new FormData();
+    
+    form.append("uploads", conv_file);
+    fetch(
+      "http://localhost:2520/data-uploads",
+      {
+        method:'post',
+        body:form,
+      }
+    ).then(async( data )=>{
+      window.data = data.clone();
+      console.log(`json:`, await data.json());
+    });
+  }
+</script>
+</html>
+

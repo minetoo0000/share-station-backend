@@ -1,0 +1,26 @@
+{
+  "name": "shamkre-station-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "author": "iDSLR",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "@types/cookie-parser": "^1.4.3",
+    "@types/crypto-js": "^4.1.1",
+    "@types/express": "^4.17.17",
+    "@types/mime": "^3.0.1",
+    "@types/multer": "^1.4.7",
+    "cookie-parser": "^1.4.6",
+    "crypto-js": "^4.1.1",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "mime": "^3.0.0",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.6.0"
+  },
+  "scripts": {
+    "start": "echo 컴파일 중... && tsc && echo 컴파일 완료, index.js 시작... && node ./dist/index.js",
+    "run": "node ./dist/index.js"
+  }
+}
