@@ -16,6 +16,10 @@ function netclose( path:string, ...desc:string[] )
 {
   _printer('-', 8, `END_PATH:${path}`, ...desc);
 }
+function _color( color_code:number, text:string ):string
+{
+  return( `\x1b[${color_code}m${text}\x1b[0m` );
+}
 function log( ...any:any[] ):undefined
 {
   _printer('-', 8, "LOG", ...any);
@@ -23,11 +27,13 @@ function log( ...any:any[] ):undefined
 }
 function errlog( ...any:any[] )
 {
-  _printer('#', 8, ">> ERROR <<", ...any);
+  // _printer('#', 8, ">> ERROR <<", ...any);
+  _printer('-', 8, `>> ${_color(41, "ERROR")} <<`, ...any);
 }
 function dbg( ...any:any[] )
 {
-  _printer('+', 8, ">> DEBUG <<", ...any);
+  // _printer('+', 8, ">> DEBUG <<", ...any);
+  _printer('-', 8, `>> ${_color(43, "DEBUG")} <<`, ...any);
 }
 function fslog()
 {
@@ -96,6 +102,12 @@ function ex( ...args:any[] ):boolean
     if ( !v ) return( true );
   return( false );
 }
+function isNAN( numeric:number ):boolean
+{
+  if ( numeric != numeric ) return( true );
+  return( false );
+}
+
 // --[[ export ]]
 export{
   netlog,
@@ -114,4 +126,5 @@ export{
   calcTime,
 
   ex,
+  isNAN,
 }

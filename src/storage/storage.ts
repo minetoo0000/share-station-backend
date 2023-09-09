@@ -59,11 +59,13 @@ const disk = multer({
 });
 
 
-function getFile( storage_id:string, set_fimename:string ):File
+// function getFile( storage_id:string, set_fimename:string ):File
+function getFile( storage_id:string ):Buffer
 {
   let buf;
   buf = fs.readFileSync(STORAGE_DIR+storage_id);
-  return( new File([buf], set_fimename) );
+  // return( new File([buf], set_fimename) );
+  return( buf );
 }
 
 function XXgetFile( storage_id:string ):Promise<File>
@@ -99,4 +101,5 @@ function XXgetFile( storage_id:string ):Promise<File>
 export{
   disk,
   getFile,
+  STORAGE_DIR,
 }

@@ -3,17 +3,18 @@
  *  - queryCreateBroadcastID 함수가 새 전달 아이디를 생성하는 경우, 호출이 2개 이상 동시에 발생하면서 새 랜덤 전달 아이디가 2개 이상 동일 할 때 중복된 전달 아이디가 데이터베이스에 생성될 수 있다.
  *  - queryCreateBroadcastID 함수의 인자로 전달하는 client_id는 쿼리로 따로 존재 여부를 검사하진 않는다. 이 부분은 외래키를 설정함으로서 존재하지 않는 client_id가 입력될 경우 에러를 발생시키는 방식으로 처리된다.
  *  - db.query 에 대해 await 키워드가 붙어있는지 체크!!!
- *  - querySendData 함수는 존재하지 않는 공유 아이디에 대해서도 쿼리가 성공적으로 이루어짐.
+ *  - querySendData 함수는 존재하지 않는 공유 아이디에 대해서도 쿼리가 성공적으로 이루어짐. ----------------- 해결 완료!
+ *  - querySendData로부터 추가되는 픽업 리스트 항목의 생성 시간은 공유 아이디의 생성 시간과 동일함. 따라서 픽업리스트 항목들도 생성 시간을 기준으로 10분이 지난 픽업 항목은 지워져야 함.
  */
 
 import "dotenv/config";
 // --[[ import ]]
 import mysql, { ResultSetHeader } from "mysql2/promise";
-import { calcTime, dbg, getRandom53bit, getRandomIDPart, getTime, log } from "../utiles";
+import { calcTime, dbg, ex, getRandom53bit, getRandomIDPart, getTime, log } from "../utiles";
 
 
 // --[[ setting ]]
-const AUTO_DELETE_TIME:number = 5000;
+const AUTO_DELETE_TIME:5000 = 5000;
 const ID_EXPIRATION_TIME:number = calcTime(0,0,10,0);
 const OBJ_EXPIRATION_TIME:number = calcTime(7*3,0,0,0);
 const MAX_TRY_ID_GENERATE:number = 200;
@@ -48,7 +49,7 @@ function dataobjMap( code:dataobjType )
 class Dataobj{
   id:number = 0;
   type:dataobjType = dataobjType.unknown;
-  create_time:number = 0;
+  created_time:number = 0;
   last_time:number = 0;
   storage_id:string = "";
   file_name:string = "";
@@ -57,7 +58,7 @@ class Dataobj{
     if ( field == undefined ) return;
     this.id = field.id;
     this.type = field.type;
-    this.create_time = field.create_time;
+    this.created_time = field.created_time;
     this.last_time = field.last_time;
     this.storage_id = field.storage_id;
     this.file_name = field.file_name;
@@ -105,6 +106,7 @@ enum Code{
   // -- db 에러 100 ~ 199
   db_blackout = 100,
   db_query_err,
+  db_query_fail,
   // -- 논리 에러 200 ~ 299
   duplication_id = 200,
   invalid_id,
@@ -117,6 +119,7 @@ enum Code{
   empty_files,
   empty_data,
   unknown_type,
+  not_defined_client_id,
 }
 type Codemap = string;
 function Codemap( code:Code ):Codemap
@@ -134,6 +137,7 @@ function Codemap( code:Code ):Codemap
     // -- db 에러.
     case Code.db_blackout:return( 'db-blackout' );
     case Code.db_query_err:return( 'db-query-err' );
+    case Code.db_query_fail:return( 'db-query-fail' );
     // -- 논리 에러.
     case Code.duplication_id:return( 'duplication-id' );
     case Code.invalid_id:return( 'invalid-id' );
@@ -146,6 +150,7 @@ function Codemap( code:Code ):Codemap
     case Code.empty_files:return( 'empty-files' );
     case Code.empty_data:return( 'empty-data' );
     case Code.unknown_type:return( 'unknown-type' );
+    case Code.not_defined_client_id:return( 'not-defined-client-id' );
   }
 }
 // -- 쿼리 함수 기본 클래스.
@@ -170,7 +175,7 @@ function queryErr( err:any ):-1
 // --[ db 연결 함수 ]
 let db:mysql.Connection;
 let db_start_state:boolean = false;
-async function connect():Promise<mysql.Connection>
+async function connect( callback:()=>void ):Promise<mysql.Connection>
 {
   log(`DB 연결중...`);
   const con = await mysql.createConnection({
@@ -184,6 +189,7 @@ async function connect():Promise<mysql.Connection>
   });
   db_start_state = true;
   log(`DB 연결 완료`);
+  callback();
   return( db=con );
 }
 // --[ dataobj 객체 자동 삭제 ]
@@ -315,10 +321,36 @@ async function queryCreateBroadcastID( client_id:number ):Promise<CreateBroadcas
   let id_2:number = 0;
   let check_result:number|0|1 = 0;
   let regist_result:number|0|1 = 0;
+  let state:0|1|2|-1 = -1;
   let create_time:number = getTime();
   // -- function
+  //? 클라이언트 아이디가 이미 생성되어있는지 확인.
+  function alreadyGeneratedCheck( qr_result:query_t ):0|1|2
+  {
+    type p = { id:number, id_1:number, id_2:number }[];
+    const parse:p = qr_result[0]as any;
+
+    //? 데이터 가져오기 완전 실패.
+    if (ex(
+      typeof parse == 'object',
+      typeof parse.length == 'number',
+    )) return( 0 );
+
+    //? 다행히 중복 없음.
+    else if ( parse.length == 0 ) return( 1 );
+
+    //? 이미 생성된 아이디가 있어서 중복임.
+    else if ( parse.length >= 1 )
+    {
+      id_1 = parse[0].id_1;
+      id_2 = parse[0].id_2;
+      return( 2 );
+    }
+
+    else return( 0 );
+  }
   //? 수신 아이디 중복 체크 함수. 0그외:중복, 0:중복 아님.
-  async function queryChecker( query_result:query_t ):Promise<undefined>
+  function generateIDChecker( query_result:query_t ):undefined
   {
     // -- init
     type r = { id_1:number, id_2:number }[];
@@ -336,6 +368,29 @@ async function queryCreateBroadcastID( client_id:number ):Promise<CreateBroadcas
       result = new CreateBroadcastID(Code.exception);
       break;
     }
+    // -- 이미 클라이언트 아이디가 생성되어있는지 확인.
+    state = await db.query(`-- sql
+      select id, id_1, id_2
+      from ${process.env.DATABASE}.clientlink
+      where id=${client_id}
+      ;
+    `).then(alreadyGeneratedCheck).catch(queryErr);
+    //? 데이터 가져오기 실패.
+    if ( state == 0 )
+    {
+      result = new CreateBroadcastID(Code.db_query_fail);
+      break;
+    }
+    //? 이미 생성된 아이디가 있음.
+    else if ( state == 2 )
+    {
+      //? 아이디는 이미 가져왔으므로 걱정 ㄴㄴ..
+      result = new CreateBroadcastID(Code.success, [id_1, id_2]);
+      break;
+    }
+
+    // -- 클라이언트 아이디가 생성되어있지 않은 상태...
+    
     // -- 새로운 수신 아이디 생성 시도.
     for ( let c=MAX_TRY_ID_GENERATE; c; c-- )
     {
@@ -348,7 +403,7 @@ async function queryCreateBroadcastID( client_id:number ):Promise<CreateBroadcas
         from ${process.env.DATABASE}.clientlink
         where id_1=${id_1} and id_2=${id_2}
         ;
-      `).then(queryChecker).catch(queryErr);
+      `).then(generateIDChecker).catch(queryErr);
       // -- 재시도 여부 검사.
       //? 중복이 아닌 경우.
       if ( check_result == 0 )
@@ -382,6 +437,12 @@ async function queryCreateBroadcastID( client_id:number ):Promise<CreateBroadcas
     {
       const id:[number,number] = [id_1, id_2];
       result = new CreateBroadcastID(Code.success, id);
+      break;
+    }
+    //? 실패 시.
+    else
+    {
+      result = new CreateBroadcastID(Code.db_query_err);
       break;
     }
    }while(0);
@@ -1312,13 +1373,12 @@ async function queryGetClientIDByBroadcastID( id_1:number, id_2:number ):Promise
   return( result );
 }
 // --[ 수신 아이디를 통해 데이터를 수신자에게 전달 ]
-class SendData extends QueryResult{
-
-}
+class SendData extends QueryResult{}
 async function querySendData( broadcast_id_1:number, broadcast_id_2:number, share_id_1:number, share_id_2:number ):Promise<SendData>
 {
   // -- init
   let result = new SendData();
+  let qr_result;
   let query_state:0|1|-1;
   let receiver_client_id:number = 0;
   let create_time:number = 0;
@@ -1379,9 +1439,26 @@ async function querySendData( broadcast_id_1:number, broadcast_id_2:number, shar
       break;
     }
     // -- 중복 아님이 확인됨...
-    // -- 현재 시간 구하기.
-    create_time = getTime();
+
+    // -- 공유 아이디의 생성 시간 구하기.
+    qr_result = await queryGetDatainfoByShareID(share_id_1, share_id_2);
+    //? 에러.
+    if ( qr_result.code != Code.success )
+    {
+      result = new SendData(qr_result.code);
+      break;
+    }
+    //? 가져오기 성공, 다만 리스트 길이가 0.
+    else if ( qr_result.data_info_list.length == 0 )
+    {
+      result = new SendData(Code.not_found);
+      break;
+    }
+    // -- 시간 가져오기.
+    create_time = qr_result.data_info_list[0].created_time;
+
     // -- 에러 없이 클라이언트 아이디를 가져옴...
+
     // -- 쿼리 - 수신자의 클라이언트 아이디를 통해 데이터 공유 아이디를 수신자에게 전달.
     query_state = await db.query(`-- sql
       insert
@@ -1449,8 +1526,13 @@ async function queryGetMyPickupList( client_id:number ):Promise<GetMyPickupList>
     for ( const id of share_id_list )
     {
       const qr_result = await queryGetDatainfoByShareID(id.id_1, id.id_2);
+      //? 실패한 경우.
+      if ( qr_result.code != Code.success )
+      {
+        data_info_list.push(dataobjType.unknown);
+        continue;
+      }
       //? 일단은 파일은 파일 끼리 묶이므로 첫번째 데이터만 보고 전체 타입 확정.
-      dbg(`디버그`,qr_result);
       data_info_list.push(qr_result.data_info_list[0].type);
     }
   }
@@ -1464,7 +1546,7 @@ async function queryGetMyPickupList( client_id:number ):Promise<GetMyPickupList>
       ;
     `).then(getShareIDList).catch(queryErr);
     // -- 검사.
-    //? 오류인 경우.
+    //? 오류인 경우.npm 
     if ( state == -1 )
     {
       result = new GetMyPickupList(Code.db_query_err);
@@ -1591,4 +1673,5 @@ export{
   dataobjType,
   dataobjMap,
   CreateFile,
+  AUTO_DELETE_TIME,
 };

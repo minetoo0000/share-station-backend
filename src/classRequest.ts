@@ -74,16 +74,15 @@ class JsonGetDataInfo extends ReqResult{
     this.data_info_list = data_info_list;
   }
 }
-// class JsonGetData extends ReqResult{
-//   formdata:FormData = new FormData();
-//   constructor( code?:Code, formdata?:FormData )
-//   {
-//     super(code);
-//     if (  )
-//   }
-// }
-
-
+class JsonGetTextData extends ReqResult{
+  text:string = "";
+  constructor( code?:Code, text?:string )
+  {
+    super(code);
+    if ( text == undefined || code != Code.success ) return;
+    this.text = text;
+  }
+}
 
 
 ////////////////////////////////////
@@ -165,5 +164,5 @@ export{
   JsonCreateShareID,
   JsonPickupList,
   JsonGetDataInfo,
-  // JsonGetData,
+  JsonGetTextData,
 }

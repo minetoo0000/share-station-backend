@@ -2,8 +2,8 @@
 import express, { NextFunction, Request, Response } from 'express';
 const app = express();
 import cookieParser from "cookie-parser";
-import { disk, getFile } from './storage/storage';
-import { base64Decode, calcTime, dbg, errlog, ex, getRandom53bit, getRandomIDPart, log, netclose, netlog } from './utiles';
+import { STORAGE_DIR, disk, getFile } from './storage/storage';
+import { base64Decode, calcTime, dbg, errlog, ex, getRandom53bit, getRandomIDPart, isNAN, log, netclose, netlog } from './utiles';
 import {
   connect,
   queryAutoObjDelete,
@@ -29,8 +29,9 @@ import {
   dataobjType,
   dataobjMap,
   CreateFile,
+  AUTO_DELETE_TIME,
 } from './database/database';
-import { DataInfo, JsonCreateShareID, JsonDataSend, JsonDataUploads, JsonGetBroadcastID, JsonGetDataInfo, JsonPickupList } from './classRequest';
+import { DataInfo, JsonCreateShareID, JsonDataSend, JsonDataUploads, JsonGetBroadcastID, JsonGetDataInfo, JsonGetTextData, JsonPickupList } from './classRequest';
 
 
 // --[[ init ]]
@@ -116,11 +117,14 @@ async function $saveDatabase( type:dataobjType, file:Express.Multer.File ):Promi
 
 
 // --[[ on ]]
-app.listen(PORT, HOSTNAME, async()=>{
+function doListen()
+{
+  app.listen(PORT, HOSTNAME, async()=>{
     log(`포트 ${PORT} 개방됨`);
     // -- db 연결.
-    await connect();
-});
+  });
+}
+connect(doListen);
 
 
 // --[ 자동 회원가입/로그인/갱신 ]
@@ -171,6 +175,7 @@ async function autoLogin( req:Request, res:Response, next:NextFunction )
       if ( query_result.is_valid == false )
       {
         if ( await regist() == 0 ) break;
+        else break;
       }
       // -- 유효함...
       // -- 쿠키 갱신.
@@ -274,19 +279,95 @@ app.post("/get-data-info", async( req,res )=>{
   res.json(result);
   netclose(`/get-data-info`);
 });
-// --[ 데이터 공유 아이디로 데이터 받아내기 ]
-// -- 요점은 텍스트 데이터와 파일 데이터 둘 다 지원해야한다.
-app.post("/get-data", async( req,res )=>{
-  netlog("/get-data");
+// --[ 데이터 공유 아이디로 파일 다운로드 하기 ]
+app.get("/get-data-file/:file_id", async( req,res )=>{
+  netlog("/get-data-file");
   // -- init
+  // let download_path:string = "";
+  let download_path:string = "";
+  let file_name:string = "";
   let qr_result;
+  let state:0|1|-1 = -1;
+  const json:{
+    file_id:number,
+  }|undefined = req.body;
   // -- function
+  function reqCheck():0|1
+  {
+    if (ex(
+      json?.file_id != undefined,
+      typeof json?.file_id == 'number',
+    )) return( 0 );
+    else return( 1 );
+  }
+  function downloadErr( err:Error ):void
+  {
+    errlog(`/get-data-file : downloadErr, 파일 전송 실패 : `, err);
+  }
   // -- system
-  do{}while(0);
+  do{
+    // -- body 검사.
+    // state = reqCheck();
+    // if ( state != 1 )
+    // {
+    //   download_path = "";
+    //   break;
+    // }
+
+    // -- body 문제 없음...
+
+    // -- 데이터 정보 가져오기.
+    // qr_result = await queryGetDatainfo(json!.file_id!);
+    qr_result = await queryGetDatainfo(Number(req.params.file_id));
+    if ( qr_result.code != Code.success )
+    {
+      download_path = "";
+      break;
+    }
+
+    // -- 파일 경로 가져오기.
+    download_path = "./"+qr_result.data_info.storage_id;
+    file_name = qr_result.data_info.file_name;
+  }while(0);
   // -- return
-  ////////////////////////// 다운로드 구현 필요!!!!
-  // res.download();
-  netclose("/get-data");
+  if ( download_path == "" || file_name == "" ) res.end();
+  else res.download(download_path, file_name, { root:STORAGE_DIR }, downloadErr);
+  netclose("/get-data-file");
+});
+// --[ 데이터 공유 아이디로 텍스트 가져오기 ]
+app.get("/get-data-text/:text_id", async( req,res )=>{
+  netlog(`/get-text-data`);
+  // -- init
+  let result = new JsonGetTextData();
+  let qr_result;
+  let get_file:Buffer;
+  let get_text:string;
+  const text_id:number = Number(req.params.text_id);
+  // -- function
+  // --logic
+  do{
+    if ( isNAN(text_id) == true )
+    {
+      result = new JsonGetTextData(Code.wrong_request);
+      break;
+    }
+
+    qr_result = await queryGetDatainfo(text_id);
+    if ( qr_result.code != Code.success )
+    {
+      result = new JsonGetTextData(qr_result.code);
+      break;
+    }
+
+    // -- 저장소 아이디로 텍스트 가져오기.
+    get_file = getFile(qr_result.data_info.storage_id);
+    get_text = get_file.toString('utf8');
+
+    result = new JsonGetTextData(Code.success, get_text);
+  }while(0);
+  // -- return
+  res.json(result);
+  netclose(`/get-text-data`);
 });
 // --[ 데이터의 고유 아이디로 공유 아이디 생성 ]
 app.post("/create-share-id", async( req,res )=>{
@@ -470,10 +551,16 @@ app.get("/get-pickup-list", async( req,res )=>{
   // -- init
   let result = new JsonPickupList();
   let qr_result;
-  const client_id:number = req.cookies.client_id;
+  const client_id:number|undefined = req.cookies.client_id;
   // -- function
   // -- system
   do{
+    if ( client_id == undefined )
+    {
+      result = new JsonPickupList(Code.not_defined_client_id);
+      break;
+    }
+    
     qr_result = await queryGetMyPickupList(client_id);
     result = new JsonPickupList(qr_result.code, qr_result.share_id_list);
   }while(0);
@@ -502,5 +589,5 @@ const ID_remove_dataobj = setInterval(
       errlog(`result_2 : `, result_2);
     }
   },
-  calcTime(0,0,0,5)
+  AUTO_DELETE_TIME
 );
