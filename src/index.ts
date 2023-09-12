@@ -101,7 +101,8 @@ async function $saveDatabase( type:dataobjType, file:Express.Multer.File ):Promi
     }
     else if ( type == dataobjType.file )
     {
-      const qr_result = await queryCreateFile(file.filename, file.originalname);
+      const file_name = Buffer.from(file.originalname, 'latin1').toString('utf8');
+      const qr_result = await queryCreateFile(file.filename, file_name);
       result = new SaveDatabase(qr_result.code, qr_result.data_id);
     }
     else
